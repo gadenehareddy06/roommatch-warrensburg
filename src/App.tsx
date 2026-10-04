@@ -6,6 +6,8 @@ import {
   UploadCloud, Users, Wifi, X, Zap,
 } from 'lucide-react'
 import { AMENITIES, defaultPreferences, demoInquiries, demoOwner, demoProperties, demoTenant, FURNISHING, PROPERTY_TYPES, TENANT_TYPES } from './data/demo'
+import { LocationPicker } from './components/LocationPicker'
+import { cityDemoHomes, nationwideDemoHomes } from './data/nationwide'
 import { calculateRoomMatch } from './lib/match'
 import { isSupabaseConfigured, mapProperty, profileFromUser, requestPasswordReset, signIn, signUp, supabase } from './lib/supabase'
 import type { Inquiry, InquiryStatus, Property, Role, SearchFilters, TenantPreferences, UserProfile } from './types'
@@ -29,12 +31,17 @@ function propertyImageStyle(property: Property, offset = 0) {
 
 function App() {
   const [view, setView] = useState<View>('home')
-  const [properties, setProperties] = useState<Property[]>(() => JSON.parse(localStorage.getItem('roommatch:warrensburg:properties') || 'null') || demoProperties)
+  const [properties, setProperties] = useState<Property[]>(() => isSupabaseConfigured ? [] : [...(JSON.parse(localStorage.getItem('roommatch:warrensburg:properties') || 'null') || demoProperties), ...nationwideDemoHomes].filter((p: Property, i: number, all: Property[]) => all.findIndex(item => item.id === p.id) === i))
   const [inquiries, setInquiries] = useState<Inquiry[]>(() => JSON.parse(localStorage.getItem('roommatch:warrensburg:inquiries') || 'null') || demoInquiries)
   const [favorites, setFavorites] = useState<Set<string>>(() => new Set(JSON.parse(localStorage.getItem('roommatch:warrensburg:favorites') || '["p2"]')))
-  const [user, setUser] = useState<UserProfile | null>(isSupabaseConfigured ? null : demoTenant)
+  const [user, setUser] = useState<UserProfile | null>(null)
   const [preferences, setPreferences] = useState<TenantPreferences>(() => JSON.parse(localStorage.getItem('roommatch:warrensburg:preferences') || 'null') || defaultPreferences)
   const [filters, setFilters] = useState<SearchFilters>(emptyFilters)
+  useEffect(() => {
+    if (isSupabaseConfigured || !filters.location) return
+    const samples = cityDemoHomes(filters.location)
+    setProperties(current => [...current, ...samples.filter(sample => !current.some(item => item.id === sample.id))])
+  }, [filters.location])
   const [selected, setSelected] = useState<Property | null>(null)
   const [editing, setEditing] = useState<Property | null>(null)
   const [authOpen, setAuthOpen] = useState(false)
@@ -230,12 +237,14 @@ function App() {
     notify('Property removed')
   }
 
-  const switchDemoRole = () => {
-    if (isSupabaseConfigured) return setAuthOpen(true)
-    const next = user?.role === 'owner' ? demoTenant : demoOwner
-    setUser(next)
-    notify(`Switched to ${next.role === 'owner' ? 'owner' : 'tenant'} demo`)
-    navigate(next.role === 'owner' ? 'owner' : 'search')
+  const switchDemoRole = async () => {
+    if (supabase) {
+      const { error } = await supabase.auth.signOut()
+      if (error) { notify(error.message); return }
+    }
+    setUser(null)
+    navigate('home')
+    notify('Signed out. You can now sign in with another account.')
   }
 
   return (
@@ -271,7 +280,7 @@ function Navbar({ user, view, mobileOpen, setMobileOpen, onNavigate, onAuth, onS
         <button className="nav-list-button" onClick={() => user ? onNavigate('property-form') : onAuth()}><Plus size={16} /> List your property</button>
       </nav>
       <div className="nav-actions">
-        {user ? <button className="user-chip" onClick={onSwitch}><span>{user.name.slice(0, 1)}</span><span className="user-copy"><b>{user.name.split(' ')[0]}</b><small>{user.role} {isSupabaseConfigured ? '' : 'demo'}</small></span></button> : <button className="button button-sm" onClick={onAuth}>Sign in</button>}
+        {user ? <><div className="user-chip"><span>{user.name.slice(0, 1)}</span><span className="user-copy"><b>{user.name.split(' ')[0]}</b><small>{user.role} {isSupabaseConfigured ? '' : 'demo'}</small></span></div><button className="button button-sm button-ghost" onClick={onSwitch}>Sign out</button></> : <button className="button button-sm" onClick={onAuth}>Sign in / Sign up</button>}
         <button className="menu-button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="Toggle menu">{mobileOpen ? <X /> : <Menu />}</button>
       </div>
     </div>
@@ -281,8 +290,8 @@ function Navbar({ user, view, mobileOpen, setMobileOpen, onNavigate, onAuth, onS
 interface LandingProps { properties: Array<{ property: Property; match: ReturnType<typeof calculateRoomMatch> }>; favorites: Set<string>; onFavorite: (id: string) => void; onOpen: (property: Property) => void; onNavigate: (view: View) => void; onSearch: (filters: Partial<SearchFilters>) => void }
 function Landing({ properties, favorites, onFavorite, onOpen, onNavigate, onSearch }: LandingProps) {
   const [location, setLocation] = useState('Warrensburg, MO')
-  const [minRent, setMinRent] = useState('5000')
-  const [maxRent, setMaxRent] = useState('15000')
+  const [minRent, setMinRent] = useState('0')
+  const [maxRent, setMaxRent] = useState('5000')
   const [tenantType, setTenantType] = useState('Working Professionals')
   const submit = (event: FormEvent) => { event.preventDefault(); onSearch({ location, minRent: Number(minRent) || 0, maxRent: Number(maxRent) || 5000, tenantType }) }
   return <>
@@ -303,7 +312,7 @@ function Landing({ properties, favorites, onFavorite, onOpen, onNavigate, onSear
         </div>
       </div>
       <form className="hero-search container" onSubmit={submit}>
-        <label><span><MapPin size={16}/> Location</span><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="City, state, or ZIP code" /></label>
+        <label><span><MapPin size={16}/> Location</span><LocationPicker value={location} onChange={setLocation}/></label>
         <label><span><DollarSign size={16}/> Minimum rent</span><input type="number" min="0" value={minRent} onChange={(e) => setMinRent(e.target.value)} /></label>
         <label><span><DollarSign size={16}/> Maximum rent</span><input type="number" min="0" value={maxRent} onChange={(e) => setMaxRent(e.target.value)} /></label>
         <label><span><Users size={16}/> Looking for</span><select value={tenantType} onChange={(e) => setTenantType(e.target.value)}>{TENANT_TYPES.map((type) => <option key={type}>{type}</option>)}</select></label>
@@ -372,13 +381,13 @@ function SearchPage({ items, filters, setFilters, favorites, onFavorite, onOpen 
   }, [items, filters])
   const activeCount = [filters.propertyType, filters.tenantType, filters.furnishing, filters.petsAllowed, filters.genderPreference, filters.foodPreference, filters.availabilityDate, ...filters.amenities].filter(Boolean).length
   return <div className="search-page container">
-    <div className="search-heading"><div><span className="eyebrow"><Sparkles size={14}/> Rooms picked for your life</span><h1>Find your next place</h1><p>Explore verified rentals and see exactly why each one matches.</p></div></div>
-    <div className="search-bar-inline"><div><MapPin/><input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="City, state, or ZIP"/></div><div><DollarSign/><input type="number" value={filters.minRent || ''} onChange={(e) => setFilters({ ...filters, minRent: Number(e.target.value) || 0 })} placeholder="Min rent"/></div><div><DollarSign/><input type="number" value={filters.maxRent} onChange={(e) => setFilters({ ...filters, maxRent: Number(e.target.value) || 5000 })} placeholder="Max rent"/></div><button className="button" onClick={() => null}><Search/> Search</button></div>
+    <div className="search-heading"><div><span className="eyebrow"><Sparkles size={14}/> Rooms picked for your life</span><h1>Find your next place</h1><p>Explore homes across the United States and see why each one matches.</p></div></div>
+    <div className="search-bar-inline"><div><MapPin/><LocationPicker value={filters.location} onChange={location => setFilters({ ...filters, location })}/></div><div><DollarSign/><input type="number" value={filters.minRent || ''} onChange={(e) => setFilters({ ...filters, minRent: Number(e.target.value) || 0 })} placeholder="Min rent"/></div><div><DollarSign/><input type="number" value={filters.maxRent} onChange={(e) => setFilters({ ...filters, maxRent: Number(e.target.value) || 5000 })} placeholder="Max rent"/></div><button className="button" onClick={() => null}><Search/> Search</button></div>
     <button className="mobile-filter-button button button-ghost" onClick={() => setDrawer(true)}><SlidersHorizontal size={18}/> Filters {activeCount > 0 && <span>{activeCount}</span>}</button>
     <div className="search-layout">
       <aside className={cx('filter-panel', drawer && 'drawer-open')}><div className="filter-mobile-head"><h2>Filters</h2><button onClick={() => setDrawer(false)}><X/></button></div><FilterContent filters={filters} setFilters={setFilters} toggleAmenity={toggleAmenity}/><button className="button apply-filter" onClick={() => setDrawer(false)}>Show {filtered.length} homes</button></aside>
       {drawer && <button className="drawer-backdrop" aria-label="Close filters" onClick={() => setDrawer(false)}/>} 
-      <section className="results-area"><div className="results-toolbar"><p><strong>{filtered.length}</strong> homes found {filters.location && <>near <b>{filters.location}</b></>}</p><label>Sort by <select value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value as SearchFilters['sort'] })}><option value="recommended">Recommended</option><option value="lowest">Lowest rent</option><option value="highest">Highest rent</option><option value="newest">Newest</option></select></label></div>
+      <section className="results-area">{!isSupabaseConfigured && <p className="demo-inventory-note">Demo inventory · Homes and prices are fictional examples, not real rental offers. Choose any city to explore sample homes.</p>}<div className="results-toolbar"><p><strong>{filtered.length}</strong> homes found {filters.location && <>near <b>{filters.location}</b></>}</p><label>Sort by <select value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value as SearchFilters['sort'] })}><option value="recommended">Recommended</option><option value="lowest">Lowest rent</option><option value="highest">Highest rent</option><option value="newest">Newest</option></select></label></div>
         {filtered.length ? <div className="property-grid search-results">{filtered.map(({ property, match }) => <PropertyCard key={property.id} property={property} match={match} saved={favorites.has(property.id)} onFavorite={onFavorite} onOpen={onOpen}/>)}</div> : <EmptyState icon={Search} title="No rooms match your filters" copy="Try increasing your budget or expanding your search area." action="Clear filters" onAction={() => setFilters(emptyFilters)}/>} 
       </section>
     </div>
