@@ -32,8 +32,8 @@ function propertyImageStyle(property: Property, offset = 0) {
 function App() {
   const [view, setView] = useState<View>('home')
   const [properties, setProperties] = useState<Property[]>(() => isSupabaseConfigured ? [] : [...(JSON.parse(localStorage.getItem('roommatch:warrensburg:properties') || 'null') || demoProperties), ...nationwideDemoHomes].filter((p: Property, i: number, all: Property[]) => all.findIndex(item => item.id === p.id) === i))
-  const [inquiries, setInquiries] = useState<Inquiry[]>(() => JSON.parse(localStorage.getItem('roommatch:warrensburg:inquiries') || 'null') || demoInquiries)
-  const [favorites, setFavorites] = useState<Set<string>>(() => new Set(JSON.parse(localStorage.getItem('roommatch:warrensburg:favorites') || '["p2"]')))
+  const [inquiries, setInquiries] = useState<Inquiry[]>(() => isSupabaseConfigured ? [] : JSON.parse(localStorage.getItem('roommatch:warrensburg:inquiries') || 'null') || demoInquiries)
+  const [favorites, setFavorites] = useState<Set<string>>(() => new Set(isSupabaseConfigured ? [] : JSON.parse(localStorage.getItem('roommatch:warrensburg:favorites') || '["p2"]')))
   const [user, setUser] = useState<UserProfile | null>(null)
   const [preferences, setPreferences] = useState<TenantPreferences>(() => JSON.parse(localStorage.getItem('roommatch:warrensburg:preferences') || 'null') || defaultPreferences)
   const [filters, setFilters] = useState<SearchFilters>(emptyFilters)
@@ -63,20 +63,21 @@ function App() {
           client.auth.getUser(),
           client.from('properties').select('*, owner:profiles(name), property_preferences(*), property_amenities(*), property_images(*)').order('created_at', { ascending: false }),
         ])
-        if (propertyError) throw propertyError
         if (!active) return
-        setProperties((rows || []).map((row) => mapProperty(row as Record<string, unknown>)))
         setUser(auth.user ? profileFromUser(auth.user) : null)
         if (auth.user) await loadPrivateData(auth.user.id)
+        if (propertyError) throw propertyError
+        setProperties((rows || []).map((row) => mapProperty({ ...row, status: String(row.status).toLowerCase(), property_type: row.property_type === 'Room' ? 'Private Room' : row.property_type })))
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : 'Could not connect to RoomMatch. Please try again.')
       } finally { if (active) setLoading(false) }
     }
     load()
-    const { data: listener } = client.auth.onAuthStateChange(async (_event, session) => {
+    const { data: listener } = client.auth.onAuthStateChange((_event, session) => {
       const next = session?.user ? profileFromUser(session.user) : null
       setUser(next)
-      if (next) await loadPrivateData(next.id)
+      // Do not await Supabase calls inside its auth lock callback.
+      if (next) window.setTimeout(() => { if (active) void loadPrivateData(next.id) }, 0)
       else { setFavorites(new Set()); setInquiries([]) }
     })
     const channel = client.channel('roommatch-inquiries').on('postgres_changes', { event: '*', schema: 'public', table: 'inquiries' }, () => {
@@ -92,11 +93,11 @@ function App() {
       supabase.from('inquiries').select('*, tenant:profiles!inquiries_tenant_id_fkey(name)').order('created_at', { ascending: false }),
       supabase.from('tenant_preferences').select('*').eq('user_id', userId).maybeSingle(),
     ])
-    setFavorites(new Set((favs || []).map((item) => item.property_id as string)))
+    setFavorites(new Set((favs || []).map((item) => String(item.property_id))))
     setInquiries((inquiryRows || []).map((row) => ({
-      id: row.id, propertyId: row.property_id, tenantId: row.tenant_id,
+      id: String(row.id), propertyId: String(row.property_id), tenantId: row.tenant_id,
       tenantName: (row.tenant as { name?: string } | null)?.name || 'Tenant', message: row.message,
-      moveInDate: row.move_in_date, contactPreference: row.contact_preference, status: row.status as InquiryStatus, createdAt: row.created_at,
+      moveInDate: row.move_in_date, contactPreference: row.contact_preference, status: String(row.status).toLowerCase() as InquiryStatus, createdAt: row.created_at,
     })))
     if (prefRows) setPreferences({
       preferredCity: prefRows.preferred_city || '', preferredLocality: prefRows.preferred_locality || '', minBudget: prefRows.min_budget || 0,
@@ -199,7 +200,7 @@ function App() {
           : supabase.from('properties').insert(payload).select().single()
         const { data: propertyRow, error: propertyError } = await query
         if (propertyError) throw propertyError
-        const propertyId = propertyRow.id as string
+        const propertyId = String(propertyRow.id)
         const suitable = (key: string) => draft.suitableFor.includes(key)
         await Promise.all([
           supabase.from('property_preferences').upsert({ property_id: propertyId, students: suitable('Students'), bachelors: suitable('Individuals'), working_professionals: suitable('Working Professionals'), families: suitable('Families'), senior_citizens: suitable('Seniors'), anyone: suitable('Anyone'), gender_preference: draft.genderPreference, pets_allowed: draft.petsAllowed, smoking_allowed: draft.smokingAllowed, food_restrictions: draft.foodRestrictions }),
