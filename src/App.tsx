@@ -534,7 +534,13 @@ function AuthModal({ onClose, onDemo }: { onClose: () => void; onDemo: (role: Ro
     try {
       if (!isSupabaseConfigured) { if (mode === 'forgot') { setMessage('Demo reset link sent.'); return } if (password.length < 6) throw new Error('Use at least 6 characters.'); onDemo(role); return }
       if (mode === 'forgot') { await requestPasswordReset(email); setMessage('Check your inbox for a secure reset link.') }
-      else if (mode === 'signup') { await signUp(name, email, password, role); setMessage('Account created. Check your inbox to confirm your email.') }
+      else if (mode === 'signup') {
+        const { session } = await signUp(name, email, password, role)
+        if (session) { onClose(); return }
+        if (passwordRef.current) passwordRef.current.value = ''
+        setMode('login')
+        setMessage('Account created! Open the confirmation email from Supabase and click “Confirm your email,” then sign in here. Check spam if you do not see it.')
+      }
       else { await signIn(email, password); onClose() }
     } catch (caught) { setMessage(caught instanceof Error ? caught.message : 'Authentication failed.') } finally { setBusy(false) }
   }
