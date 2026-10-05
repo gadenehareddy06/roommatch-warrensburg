@@ -19,7 +19,7 @@ export async function signUp(name: string, email: string, password: string, role
   if (!supabase) throw new Error('Supabase is not configured')
   const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { name, role } } })
   if (error) throw error
-  return data.user
+  return data
 }
 
 export async function requestPasswordReset(email: string) {
